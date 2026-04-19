@@ -4,6 +4,7 @@ import cors from "cors";
 import {connectDB} from "./config/db.js";
 import TaskRoutes from "./routes/TaskRoutes.js";
 import AiRoutes from "./routes/AiRoutes.js";
+import UserRoutes from "./routes/UserRoutes.js";
 
 const app = express();
 dotenv.config();
@@ -32,6 +33,7 @@ app.get("/health", (req, res) => {
     res.status(200).json({ status: "ok" });
 });
 
+app.use("/api/users", UserRoutes);
 app.use("/api/tasks", TaskRoutes);
 app.use("/api/ai", AiRoutes);
 

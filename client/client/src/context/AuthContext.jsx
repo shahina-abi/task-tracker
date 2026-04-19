@@ -1,4 +1,5 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
+import { loginUser, registerUser } from '../services/api';
 
 const AuthContext = createContext();
 
@@ -24,12 +25,6 @@ export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
 
-    const createMockUser = (name, email) => ({
-        id: email.toLowerCase(),
-        name,
-        email,
-    });
-
     useEffect(() => {
         const storedUser = readStoredUser();
 
@@ -40,34 +35,18 @@ export const AuthProvider = ({ children }) => {
         setLoading(false);
     }, []);
 
-    const login = (email, password) => {
-        return new Promise((resolve, reject) => {
-            setTimeout(() => {
-                if (email && password) {
-                    const mockUser = createMockUser('John Doe', email);
-                    setUser(mockUser);
-                    localStorage.setItem('user', JSON.stringify(mockUser));
-                    resolve(mockUser);
-                } else {
-                    reject(new Error('Invalid credentials'));
-                }
-            }, 1000);
-        });
+    const login = async (email, password) => {
+        const loggedInUser = await loginUser({ email, password });
+        setUser(loggedInUser);
+        localStorage.setItem('user', JSON.stringify(loggedInUser));
+        return loggedInUser;
     };
 
-    const register = (name, email, password) => {
-        return new Promise((resolve, reject) => {
-            setTimeout(() => {
-                if (name && email && password) {
-                    const mockUser = createMockUser(name, email);
-                    setUser(mockUser);
-                    localStorage.setItem('user', JSON.stringify(mockUser));
-                    resolve(mockUser);
-                } else {
-                    reject(new Error('Invalid data'));
-                }
-            }, 1000);
-        });
+    const register = async (name, email, password) => {
+        const newUser = await registerUser({ name, email, password });
+        setUser(newUser);
+        localStorage.setItem('user', JSON.stringify(newUser));
+        return newUser;
     };
 
     const logout = () => {

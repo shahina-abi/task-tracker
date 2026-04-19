@@ -39,6 +39,16 @@ export const fetchTasks = async () => {
     return data;
 };
 
+export const loginUser = async (payload) => {
+    const { data } = await api.post('/users/login', payload);
+    return data;
+};
+
+export const registerUser = async (payload) => {
+    const { data } = await api.post('/users/register', payload);
+    return data;
+};
+
 export const createTask = async (payload) => {
     const { data } = await api.post('/tasks', payload);
     return data;

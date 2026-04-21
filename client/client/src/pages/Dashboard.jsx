@@ -1,19 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import { FaChartPie, FaPlus, FaSearch } from 'react-icons/fa';
 import { FaWandMagicSparkles } from 'react-icons/fa6';
+import FocusSessionPanel from '../components/FocusSessionPanel';
+import StatsCard from '../components/StatsCard';
 import TaskCard from '../components/TaskCard';
 import Modal from '../components/Modal';
 import TaskForm from '../components/TaskForm';
 import DailyPlanModal from '../components/DailyPlanModal';
+import CalendarView from '../components/CalendarView';
+import ReminderPanel from '../components/ReminderPanel';
+import ReminderSettingsCard from '../components/ReminderSettingsCard';
+import StreakPanel from '../components/StreakPanel';
 import WeeklyReportModal from '../components/WeeklyReportModal';
 import gsap from 'gsap';
 import {
     createTask,
     deleteTask,
+    fetchReminders,
+    fetchReminderSettings,
     fetchWeeklyReport,
     fetchTasks,
     planDay,
+    sendTestReminderEmail,
     updateTask,
+    updateReminderSettings,
 } from '../services/api';
 
 const Dashboard = () => {
@@ -38,6 +48,30 @@ const Dashboard = () => {
     });
     const [isWeeklyReportLoading, setIsWeeklyReportLoading] = useState(false);
     const [weeklyReportError, setWeeklyReportError] = useState('');
+    const [reminders, setReminders] = useState([]);
+    const [remindersLoading, setRemindersLoading] = useState(true);
+    const [remindersError, setRemindersError] = useState('');
+    const [notificationsEnabled, setNotificationsEnabled] = useState(
+        typeof window !== 'undefined' && 'Notification' in window
+            ? window.Notification.permission === 'granted'
+            : false
+    );
+    const [reminderSettings, setReminderSettings] = useState({
+        emailRemindersEnabled: true,
+        reminderTime: '09:00',
+        remindBeforeDays: 1,
+        email: '',
+    });
+    const [reminderSettingsLoading, setReminderSettingsLoading] = useState(true);
+    const [reminderSettingsSaving, setReminderSettingsSaving] = useState(false);
+    const [testEmailSending, setTestEmailSending] = useState(false);
+    const [reminderSettingsError, setReminderSettingsError] = useState('');
+    const [testEmailResult, setTestEmailResult] = useState('');
+    const [selectedFocusMinutes, setSelectedFocusMinutes] = useState(25);
+    const [timerMode, setTimerMode] = useState('focus');
+    const [timeLeft, setTimeLeft] = useState(25 * 60);
+    const [isTimerRunning, setIsTimerRunning] = useState(false);
+    const [completedFocusSessions, setCompletedFocusSessions] = useState(0);
 
     useEffect(() => {
         gsap.fromTo('.dashboard-header',
@@ -46,7 +80,73 @@ const Dashboard = () => {
         );
 
         loadTasks();
+        loadReminders();
+        loadReminderSettings();
     }, []);
+
+    useEffect(() => {
+        if (timerMode === 'focus' && !isTimerRunning) {
+            setTimeLeft(selectedFocusMinutes * 60);
+        }
+    }, [selectedFocusMinutes, timerMode, isTimerRunning]);
+
+    useEffect(() => {
+        if (!isTimerRunning) {
+            return undefined;
+        }
+
+        const interval = window.setInterval(() => {
+            setTimeLeft((previous) => {
+                if (previous <= 1) {
+                    window.clearInterval(interval);
+                    setIsTimerRunning(false);
+
+                    if (timerMode === 'focus') {
+                        setCompletedFocusSessions((count) => count + 1);
+                        setTimerMode('break');
+                        return 5 * 60;
+                    }
+
+                    setTimerMode('focus');
+                    return selectedFocusMinutes * 60;
+                }
+
+                return previous - 1;
+            });
+        }, 1000);
+
+        return () => window.clearInterval(interval);
+    }, [isTimerRunning, selectedFocusMinutes, timerMode]);
+
+    useEffect(() => {
+        if (
+            typeof window === 'undefined' ||
+            !('Notification' in window) ||
+            Notification.permission !== 'granted' ||
+            !reminders.length
+        ) {
+            return;
+        }
+
+        const notifiedKey = 'notified_reminders';
+        const notifiedTitles = JSON.parse(localStorage.getItem(notifiedKey) || '[]');
+        const newReminders = reminders.filter(
+            (reminder) => !notifiedTitles.includes(reminder.title)
+        );
+
+        newReminders.forEach((reminder) => {
+            new Notification(reminder.title, {
+                body: reminder.message,
+            });
+        });
+
+        if (newReminders.length) {
+            localStorage.setItem(
+                notifiedKey,
+                JSON.stringify([...new Set([...notifiedTitles, ...newReminders.map((item) => item.title)])])
+            );
+        }
+    }, [reminders]);
 
     const formatTask = (task) => ({
         ...task,
@@ -55,7 +155,99 @@ const Dashboard = () => {
             ? new Date(task.deadline).toLocaleDateString()
             : 'No deadline',
         duration: Number(task.duration ?? 1),
+        completedAt: task.completedAt || null,
     });
+
+    const getCompletionStats = (allTasks) => {
+        const completedTasks = allTasks.filter((task) => task.completed && task.completedAt);
+
+        if (!completedTasks.length) {
+            const recentDays = Array.from({ length: 14 }, (_, index) => {
+                const date = new Date();
+                date.setDate(date.getDate() - (13 - index));
+
+                return {
+                    date: date.toISOString().slice(0, 10),
+                    weekday: date.toLocaleDateString(undefined, { weekday: 'short' }),
+                    shortDate: date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+                    label: date.toLocaleDateString(),
+                    count: 0,
+                };
+            });
+
+            return { currentStreak: 0, longestStreak: 0, completionDays: 0, recentDays };
+        }
+
+        const countsByDay = completedTasks.reduce((accumulator, task) => {
+            const key = new Date(task.completedAt).toISOString().slice(0, 10);
+            accumulator[key] = (accumulator[key] || 0) + 1;
+            return accumulator;
+        }, {});
+
+        const completedDates = Object.keys(countsByDay).sort();
+        let longestStreak = 0;
+        let runningStreak = 0;
+        let previousDate = null;
+
+        completedDates.forEach((dateString) => {
+            const currentDate = new Date(`${dateString}T00:00:00`);
+
+            if (!previousDate) {
+                runningStreak = 1;
+            } else {
+                const diffDays = Math.round(
+                    (currentDate.getTime() - previousDate.getTime()) / (24 * 60 * 60 * 1000)
+                );
+                runningStreak = diffDays === 1 ? runningStreak + 1 : 1;
+            }
+
+            longestStreak = Math.max(longestStreak, runningStreak);
+            previousDate = currentDate;
+        });
+
+        let currentStreak = 0;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const checkDate = new Date(today);
+
+        while (countsByDay[checkDate.toISOString().slice(0, 10)]) {
+            currentStreak += 1;
+            checkDate.setDate(checkDate.getDate() - 1);
+        }
+
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+
+        if (!currentStreak && countsByDay[yesterday.toISOString().slice(0, 10)]) {
+            let dateCursor = new Date(yesterday);
+
+            while (countsByDay[dateCursor.toISOString().slice(0, 10)]) {
+                currentStreak += 1;
+                dateCursor.setDate(dateCursor.getDate() - 1);
+            }
+        }
+
+        const recentDays = Array.from({ length: 14 }, (_, index) => {
+            const date = new Date();
+            date.setDate(date.getDate() - (13 - index));
+            const key = date.toISOString().slice(0, 10);
+
+            return {
+                date: key,
+                weekday: date.toLocaleDateString(undefined, { weekday: 'short' }),
+                shortDate: date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+                label: date.toLocaleDateString(),
+                count: countsByDay[key] || 0,
+            };
+        });
+
+        return {
+            currentStreak,
+            longestStreak,
+            completionDays: completedDates.length,
+            recentDays,
+        };
+    };
 
     const loadTasks = async () => {
         try {
@@ -70,10 +262,41 @@ const Dashboard = () => {
         }
     };
 
+    const loadReminders = async () => {
+        try {
+            setRemindersLoading(true);
+            setRemindersError('');
+            const data = await fetchReminders();
+            setReminders(data.reminders || []);
+        } catch (error) {
+            setRemindersError(
+                error.response?.data?.message || 'Unable to load AI reminders right now.'
+            );
+        } finally {
+            setRemindersLoading(false);
+        }
+    };
+
+    const loadReminderSettings = async () => {
+        try {
+            setReminderSettingsLoading(true);
+            setReminderSettingsError('');
+            const data = await fetchReminderSettings();
+            setReminderSettings(data);
+        } catch (error) {
+            setReminderSettingsError(
+                error.response?.data?.message || 'Unable to load reminder settings right now.'
+            );
+        } finally {
+            setReminderSettingsLoading(false);
+        }
+    };
+
     const handleAddTask = async (newTask) => {
         try {
             const createdTask = await createTask(newTask);
             setTasks((previousTasks) => [formatTask(createdTask), ...previousTasks]);
+            loadReminders();
             setIsModalOpen(false);
         } catch (error) {
             setTasksError(error.response?.data?.message || 'Could not create the task.');
@@ -88,6 +311,7 @@ const Dashboard = () => {
                     task._id === currentTask._id ? formatTask(savedTask) : task
                 )
             );
+            loadReminders();
             setIsModalOpen(false);
             setCurrentTask(null);
         } catch (error) {
@@ -100,6 +324,7 @@ const Dashboard = () => {
             try {
                 await deleteTask(id);
                 setTasks((previousTasks) => previousTasks.filter((task) => task._id !== id));
+                loadReminders();
             } catch (error) {
                 setTasksError(error.response?.data?.message || 'Could not delete the task.');
             }
@@ -115,6 +340,7 @@ const Dashboard = () => {
             setTasks((previousTasks) =>
                 previousTasks.map((item) => (item._id === task._id ? formatTask(savedTask) : item))
             );
+            loadReminders();
         } catch (error) {
             setTasksError(error.response?.data?.message || 'Could not update task status.');
         }
@@ -164,6 +390,66 @@ const Dashboard = () => {
         }
     };
 
+    const handleEnableNotifications = async () => {
+        if (!('Notification' in window)) {
+            setRemindersError('Browser notifications are not supported on this device.');
+            return;
+        }
+
+        const permission = await Notification.requestPermission();
+        setNotificationsEnabled(permission === 'granted');
+    };
+
+    const handleStartPauseTimer = () => {
+        setIsTimerRunning((running) => !running);
+    };
+
+    const handleResetTimer = () => {
+        setIsTimerRunning(false);
+        setTimerMode('focus');
+        setTimeLeft(selectedFocusMinutes * 60);
+    };
+
+    const handleSaveReminderSettings = async (nextSettings) => {
+        try {
+            setReminderSettingsSaving(true);
+            setReminderSettingsError('');
+            setTestEmailResult('');
+            const savedSettings = await updateReminderSettings(nextSettings);
+            setReminderSettings(savedSettings);
+        } catch (error) {
+            setReminderSettingsError(
+                error.response?.data?.message || 'Unable to save reminder settings.'
+            );
+        } finally {
+            setReminderSettingsSaving(false);
+        }
+    };
+
+    const handleSendTestEmail = async () => {
+        try {
+            setTestEmailSending(true);
+            setReminderSettingsError('');
+            const result = await sendTestReminderEmail();
+
+            if (result.delivered) {
+                setTestEmailResult('Test reminder email sent successfully.');
+            } else if (result.provider === 'preview') {
+                setTestEmailResult(
+                    'Preview mode: add RESEND_API_KEY and EMAIL_FROM on the backend to send real emails.'
+                );
+            } else {
+                setTestEmailResult(result.message || 'No reminder email was sent.');
+            }
+        } catch (error) {
+            setReminderSettingsError(
+                error.response?.data?.message || 'Unable to send test reminder email.'
+            );
+        } finally {
+            setTestEmailSending(false);
+        }
+    };
+
     const filteredTasks = tasks.filter(task => {
         const matchesFilter = filter === 'All' ||
             (filter === 'Completed' && task.completed) ||
@@ -172,12 +458,30 @@ const Dashboard = () => {
         return matchesFilter && matchesSearch;
     });
 
+    const pendingTasksCount = tasks.filter((task) => !task.completed).length;
+    const completedTasksCount = tasks.filter((task) => task.completed).length;
+    const totalPlannedHours = tasks.reduce((sum, task) => sum + (Number(task.duration) || 0), 0);
+    const completionRate = tasks.length ? Math.round((completedTasksCount / tasks.length) * 100) : 0;
+    const completionStats = getCompletionStats(tasks);
+    const urgentTask = reminders[0] || tasks.find((task) => !task.completed) || null;
+
+    const handleMarkUrgentTaskComplete = async (taskId) => {
+        const targetTask = tasks.find((task) => task._id === taskId);
+
+        if (!targetTask) {
+            return;
+        }
+
+        await handleToggleStatus(targetTask);
+    };
+
     return (
         <div className="container mx-auto px-6 py-10 min-h-screen">
             <div className="dashboard-header flex flex-col md:flex-row justify-between items-center mb-10 gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold text-white mb-2">My Dashboard</h1>
-                    <p className="text-slate-400">Manage your tasks efficiently.</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-sky-300">Student + Productivity Mode</p>
+                    <h1 className="mt-2 text-3xl font-bold text-white mb-2">My Dashboard</h1>
+                    <p className="text-slate-400">Turn deadlines, study sessions, and personal goals into a clear weekly system.</p>
                 </div>
                 <div className="flex flex-col gap-3 sm:flex-row">
                     <button
@@ -203,6 +507,74 @@ const Dashboard = () => {
                     {tasksError}
                 </div>
             )}
+
+            <FocusSessionPanel
+                urgentTask={urgentTask}
+                timerMode={timerMode}
+                timeLeft={timeLeft}
+                isRunning={isTimerRunning}
+                completedFocusSessions={completedFocusSessions}
+                selectedMinutes={selectedFocusMinutes}
+                onMinutesChange={setSelectedFocusMinutes}
+                onStartPause={handleStartPauseTimer}
+                onReset={handleResetTimer}
+                onMarkComplete={handleMarkUrgentTaskComplete}
+            />
+
+            <section className="mb-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <StatsCard
+                    eyebrow="Pending"
+                    value={pendingTasksCount}
+                    label="Tasks still waiting for focused work"
+                    accent="from-amber-500/15 via-slate-900 to-slate-900"
+                />
+                <StatsCard
+                    eyebrow="Completed"
+                    value={completedTasksCount}
+                    label="Tasks you have already finished"
+                    accent="from-emerald-500/15 via-slate-900 to-slate-900"
+                />
+                <StatsCard
+                    eyebrow="Planned Hours"
+                    value={`${totalPlannedHours}h`}
+                    label="Total hours currently mapped across tasks"
+                    accent="from-sky-500/15 via-slate-900 to-slate-900"
+                />
+                <StatsCard
+                    eyebrow="Completion Rate"
+                    value={`${completionRate}%`}
+                    label="How much of your workload is already done"
+                    accent="from-fuchsia-500/15 via-slate-900 to-slate-900"
+                />
+            </section>
+
+            <StreakPanel
+                currentStreak={completionStats.currentStreak}
+                longestStreak={completionStats.longestStreak}
+                completionDays={completionStats.completionDays}
+                recentDays={completionStats.recentDays}
+            />
+
+            <CalendarView tasks={tasks} />
+
+            <ReminderPanel
+                reminders={reminders}
+                loading={remindersLoading}
+                error={remindersError}
+                notificationsEnabled={notificationsEnabled}
+                onEnableNotifications={handleEnableNotifications}
+            />
+
+            <ReminderSettingsCard
+                settings={reminderSettings}
+                loading={reminderSettingsLoading}
+                saving={reminderSettingsSaving}
+                testing={testEmailSending}
+                error={reminderSettingsError}
+                testResult={testEmailResult}
+                onSave={handleSaveReminderSettings}
+                onSendTest={handleSendTestEmail}
+            />
 
             {/* Filters & Search */}
             <div className="flex flex-col md:flex-row gap-4 mb-8">

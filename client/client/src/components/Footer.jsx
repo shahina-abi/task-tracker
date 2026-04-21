@@ -1,14 +1,13 @@
 import React from 'react';
-import { FaHeart, FaGithub, FaTwitter } from 'react-icons/fa';
+import { FaBrain, FaGithub, FaTwitter } from 'react-icons/fa';
 
 const Footer = () => {
     return (
         <footer className="bg-dark border-t border-slate-800 py-8 mt-auto">
             <div className="container mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-4">
                 <div className="text-slate-400 text-sm flex items-center gap-1">
-                    <span>Made with</span>
-                    <FaHeart className="text-accent animate-pulse" />
-                    <span>by TaskTracker Team</span>
+                    <FaBrain className="text-sky-300" />
+                    <span>Built for focused study and personal productivity.</span>
                 </div>
 
                 <div className="flex gap-6">
@@ -17,7 +16,7 @@ const Footer = () => {
                 </div>
 
                 <div className="text-slate-500 text-xs">
-                    &copy; {new Date().getFullYear()} TaskTracker. All rights reserved.
+                    &copy; {new Date().getFullYear()} TaskTracker. Plan smarter every week.
                 </div>
             </div>
         </footer>

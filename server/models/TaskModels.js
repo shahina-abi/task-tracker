@@ -36,6 +36,10 @@ const TaskSchema = new mongoose.Schema(
             enum: ["pending", "completed"],
             default: "pending",
         },
+        completedAt: {
+            type: Date,
+            default: null,
+        },
         owner: {
             type: String,
             required: true,

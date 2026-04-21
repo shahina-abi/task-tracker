@@ -76,6 +76,7 @@ export const createTaskForUser = async (ownerId, payload) => {
 
     return Task.create({
         ...normalizedTask,
+        completedAt: normalizedTask.status === "completed" ? new Date() : null,
         owner: ownerId,
     });
 };
@@ -94,15 +95,25 @@ export const updateTaskForUser = async (ownerId, taskId, payload) => {
         throw new Error("Duration must be a valid number");
     }
 
+    const existingTask = await Task.findOne({ _id: taskId, owner: ownerId });
+
+    if (!existingTask) {
+        throw new Error("Task not found");
+    }
+
+    if (updatePayload.status === "completed" && existingTask.status !== "completed") {
+        updatePayload.completedAt = new Date();
+    }
+
+    if (updatePayload.status === "pending") {
+        updatePayload.completedAt = null;
+    }
+
     const task = await Task.findOneAndUpdate(
         { _id: taskId, owner: ownerId },
         updatePayload,
         { new: true, runValidators: true }
     );
-
-    if (!task) {
-        throw new Error("Task not found");
-    }
 
     return task;
 };

@@ -1,4 +1,5 @@
 import { generateDailyPlanForUser } from "../services/aiPlannerService.js";
+import { generateRemindersForUser } from "../services/reminderService.js";
 import { generateWeeklyReportForUser } from "../services/weeklyReportService.js";
 
 export const planDay = async (req, res) => {
@@ -22,6 +23,17 @@ export const getWeeklyReport = async (req, res) => {
     } catch (error) {
         res.status(500).json({
             message: error.message || "Failed to generate weekly report",
+        });
+    }
+};
+
+export const getReminders = async (req, res) => {
+    try {
+        const reminders = await generateRemindersForUser(req.user?.id);
+        res.status(200).json(reminders);
+    } catch (error) {
+        res.status(500).json({
+            message: error.message || "Failed to generate reminders",
         });
     }
 };

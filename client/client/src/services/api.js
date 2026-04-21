@@ -74,4 +74,24 @@ export const fetchWeeklyReport = async () => {
     return data;
 };
 
+export const fetchReminders = async () => {
+    const { data } = await api.get('/ai/reminders');
+    return data;
+};
+
+export const fetchReminderSettings = async () => {
+    const { data } = await api.get('/users/reminder-settings');
+    return data;
+};
+
+export const updateReminderSettings = async (payload) => {
+    const { data } = await api.put('/users/reminder-settings', payload);
+    return data;
+};
+
+export const sendTestReminderEmail = async () => {
+    const { data } = await api.post('/users/reminder-settings/test-email');
+    return data;
+};
+
 export default api;
